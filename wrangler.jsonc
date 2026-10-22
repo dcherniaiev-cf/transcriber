@@ -1,0 +1,31 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "ks-transcriber",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-09-01",
+	// global_fetch_strictly_public lets the OAuth library fetch Client ID Metadata
+	// Documents (how newer MCP clients identify themselves) without reaching private IPs.
+	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+	"kv_namespaces": [
+		{
+			// OAuth grants, tokens and registered clients, plus one-time upload links.
+			// Create with `npx wrangler kv namespace create OAUTH_KV` and paste the id here.
+			"binding": "OAUTH_KV",
+			"id": "<KV_NAMESPACE_ID>"
+		}
+	],
+	"vars": {
+		// Only Google Workspace accounts of this domain may sign in.
+		"ALLOWED_DOMAIN": "culturalforces.org",
+		// The Worker's public address, no trailing slash. Shown by `wrangler deploy`.
+		"PUBLIC_ORIGIN": "https://ks-transcriber.<ACCOUNT_SUBDOMAIN>.workers.dev"
+	},
+	// Secrets (set with `npx wrangler secret put <NAME>`):
+	// NEAR_API_KEY, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SIGNING_SECRET
+	"observability": {
+		"enabled": true
+	},
+	"dev": {
+		"port": 8788
+	}
+}
