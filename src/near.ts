@@ -37,9 +37,11 @@ export async function transcribe(
 
 	const send = () => fetch(ENDPOINT, { method: "POST", headers: { Authorization: `Bearer ${apiKey}` }, body: form });
 	let res = await send();
-	// One retry for transient upstream failures; seen occasionally on short clips.
-	if (res.status >= 500) {
-		await new Promise((resolve) => setTimeout(resolve, 1500));
+	// NEAR's backend occasionally answers 5xx (a 525 twice in a row was seen from
+	// Cloudflare on 2026-10-22), so retry twice with a growing pause.
+	for (const pauseMs of [1500, 4000]) {
+		if (res.status < 500) break;
+		await new Promise((resolve) => setTimeout(resolve, pauseMs));
 		res = await send();
 	}
 	if (!res.ok) throw await upstreamError(res);
