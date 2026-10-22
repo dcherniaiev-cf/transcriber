@@ -11,14 +11,14 @@
 			// OAuth grants, tokens and registered clients, plus one-time upload links.
 			// Create with `npx wrangler kv namespace create OAUTH_KV` and paste the id here.
 			"binding": "OAUTH_KV",
-			"id": "<KV_NAMESPACE_ID>"
+			"id": "dc5c2b11df2f4e26bd9a2a6e4b52140e"
 		}
 	],
 	"vars": {
 		// Only Google Workspace accounts of this domain may sign in.
 		"ALLOWED_DOMAIN": "culturalforces.org",
 		// The Worker's public address, no trailing slash. Shown by `wrangler deploy`.
-		"PUBLIC_ORIGIN": "https://ks-transcriber.<ACCOUNT_SUBDOMAIN>.workers.dev"
+		"PUBLIC_ORIGIN": "https://ks-transcriber.d-cherniaiev-5a7.workers.dev"
 	},
 	// Secrets (set with `npx wrangler secret put <NAME>`):
 	// NEAR_API_KEY, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SIGNING_SECRET

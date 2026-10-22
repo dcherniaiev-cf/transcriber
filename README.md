@@ -79,7 +79,7 @@ npm run deploy
 **Claude Code:**
 
 ```bash
-claude mcp add --transport http ks-transcriber https://ks-transcriber.<subdomain>.workers.dev/mcp
+claude mcp add --transport http ks-transcriber https://ks-transcriber.d-cherniaiev-5a7.workers.dev/mcp
 ```
 
 Далі в Claude Code: `/mcp` → `ks-transcriber` → Authenticate. Відкриється браузер: «Дозволити» → вхід через Google робочим акаунтом.
