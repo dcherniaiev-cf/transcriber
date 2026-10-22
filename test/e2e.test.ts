@@ -1,91 +1,156 @@
 import { existsSync, readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
-import { signUploadTicket } from "../src/uploads";
+import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
+import { beforeAll, describe, expect, it } from "vitest";
+import { sha256Base64Url, randomToken } from "../src/encoding";
 
-// Against a running Worker: E2E_ORIGIN=http://localhost:8788 npx vitest run test/e2e.test.ts
-// Signs upload links with SIGNING_SECRET from .dev.vars, so it only works against `wrangler dev`.
+// Walks the whole path an MCP client takes, against a running Worker:
+//   E2E_ORIGIN=http://localhost:8788 npm run test:e2e
+// In password mode the login comes from E2E_USERNAME / E2E_PASSWORD, or from .dev.vars.
 const origin = process.env.E2E_ORIGIN;
-const secret = existsSync(".dev.vars")
-	? readFileSync(".dev.vars", "utf8").match(/^SIGNING_SECRET=(.+)$/m)?.[1]?.trim()
-	: undefined;
+const devVars = existsSync(".dev.vars") ? readFileSync(".dev.vars", "utf8") : "";
+const fromDevVars = (name: string) => devVars.match(new RegExp(`^${name}=(.+)$`, "m"))?.[1]?.trim();
+const username = process.env.E2E_USERNAME ?? fromDevVars("LOGIN_USERNAME");
+const password = process.env.E2E_PASSWORD ?? fromDevVars("LOGIN_PASSWORD");
 
-describe.skipIf(!origin || !secret)("deployed routes", () => {
-	it("serves the landing page", async () => {
-		const res = await fetch(`${origin}/`);
-		expect(res.status).toBe(200);
-		expect(await res.text()).toContain("/mcp");
+const REDIRECT_URI = "http://localhost:9999/callback";
+const cookiesOf = (res: Response) =>
+	res.headers
+		.getSetCookie()
+		.map((c) => c.split(";")[0])
+		.join("; ");
+const handleOf = (page: string) => page.match(/name="handle" value="([^"]+)"/)![1];
+
+describe.skipIf(!origin)("end to end", () => {
+	let clientId: string;
+	const verifier = randomToken(32);
+
+	beforeAll(async () => {
+		const registration = await fetch(`${origin}/register`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ client_name: "E2E test", redirect_uris: [REDIRECT_URI], token_endpoint_auth_method: "none" }),
+		});
+		expect(registration.status).toBe(201);
+		clientId = ((await registration.json()) as { client_id: string }).client_id;
 	});
 
-	it("challenges unauthenticated MCP requests", async () => {
+	async function openConsent() {
+		const url = new URL(`${origin}/authorize`);
+		url.search = new URLSearchParams({
+			response_type: "code",
+			client_id: clientId,
+			redirect_uri: REDIRECT_URI,
+			state: "xyz",
+			code_challenge: await sha256Base64Url(verifier),
+			code_challenge_method: "S256",
+		}).toString();
+		const res = await fetch(url, { redirect: "manual" });
+		const page = await res.text();
+		expect(res.status, page).toBe(200);
+		return { page, cookie: cookiesOf(res) };
+	}
+
+	const submit = (cookie: string, fields: Record<string, string>) =>
+		fetch(`${origin}/authorize`, {
+			method: "POST",
+			redirect: "manual",
+			headers: { Cookie: cookie, "Content-Type": "application/x-www-form-urlencoded" },
+			body: new URLSearchParams(fields),
+		});
+
+	it("serves the landing page and challenges anonymous MCP calls", async () => {
+		expect((await fetch(`${origin}/`)).status).toBe(200);
 		const res = await fetch(`${origin}/mcp`, { method: "POST", body: "{}" });
 		expect(res.status).toBe(401);
 		expect(res.headers.get("WWW-Authenticate")).toContain("oauth-protected-resource/mcp");
 	});
 
-	it("registers a client and shows the consent page, then sends to Google with the domain hint", async () => {
-		const registration = await fetch(`${origin}/register`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				client_name: "E2E test",
-				redirect_uris: ["http://localhost:9999/callback"],
-				token_endpoint_auth_method: "none",
-			}),
-		});
-		expect(registration.status).toBe(201);
-		const { client_id } = (await registration.json()) as { client_id: string };
-
-		const authorize = new URL(`${origin}/authorize`);
-		authorize.search = new URLSearchParams({
-			response_type: "code",
-			client_id,
-			redirect_uri: "http://localhost:9999/callback",
-			state: "xyz",
-			code_challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM",
-			code_challenge_method: "S256",
-		}).toString();
-		const consent = await fetch(authorize, { redirect: "manual" });
-		const page = await consent.text();
-		expect(consent.status, page).toBe(200);
-		expect(page).toContain("@culturalforces.org");
-
-		const handle = page.match(/name="handle" value="([^"]+)"/)![1];
-		const cookie = consent.headers.getSetCookie().map((c) => c.split(";")[0]).join("; ");
-		const approve = await fetch(`${origin}/authorize`, {
-			method: "POST",
-			redirect: "manual",
-			headers: { Cookie: cookie, "Content-Type": "application/x-www-form-urlencoded" },
-			body: new URLSearchParams({ handle, decision: "approve" }),
-		});
-		expect(approve.status, await approve.clone().text()).toBe(302);
-		const google = new URL(approve.headers.get("Location")!);
-		expect(google.origin).toBe("https://accounts.google.com");
-		expect(google.searchParams.get("hd")).toBe("culturalforces.org");
-		expect(google.searchParams.get("code_challenge_method")).toBe("S256");
-		expect(google.searchParams.get("redirect_uri")).toBe(`${origin}/callback`);
-	});
-
 	it("refuses forged upload links", async () => {
-		const res = await fetch(`${origin}/upload/forged.token`, { method: "PUT", body: "x" });
-		expect(res.status).toBe(404);
+		expect((await fetch(`${origin}/upload/forged.token`, { method: "PUT", body: "x" })).status).toBe(404);
 	});
 
-	it.skipIf(!existsSync("test-audio/low.mp3"))("transcribes an upload once, then refuses the link", async () => {
-		const { token } = await signUploadTicket(secret!, { format: "srt" });
-		const audio = readFileSync("test-audio/low.mp3");
-		const first = await fetch(`${origin}/upload/${token}`, { method: "PUT", body: audio });
-		const body = await first.text();
-		expect(first.status, body).toBe(200);
-		expect(body).toMatch(/^1\n00:00:00,000 --> /);
+	describe("Google mode", () => {
+		it("sends the person to Google with the domain hint", async (ctx) => {
+			const { page, cookie } = await openConsent();
+			if (page.includes('name="password"')) ctx.skip();
+			const res = await submit(cookie, { handle: handleOf(page), decision: "approve" });
+			expect(res.status).toBe(302);
+			const google = new URL(res.headers.get("Location")!);
+			expect(google.origin).toBe("https://accounts.google.com");
+			expect(google.searchParams.get("hd")).toBe("culturalforces.org");
+			expect(google.searchParams.get("redirect_uri")).toBe(`${origin}/callback`);
+		});
+	});
 
-		const again = await fetch(`${origin}/upload/${token}`, { method: "PUT", body: audio });
-		expect(again.status).toBe(410);
-	}, 60_000);
+	describe.skipIf(!username || !password)("password mode", () => {
+		let accessToken: string;
+		let mcp: Client;
 
-	it.skipIf(!existsSync("test-audio/test-en.m4a"))("explains how to convert m4a", async () => {
-		const { token } = await signUploadTicket(secret!, { format: "text" });
-		const res = await fetch(`${origin}/upload/${token}`, { method: "PUT", body: readFileSync("test-audio/test-en.m4a") });
-		expect(res.status).toBe(415);
-		expect(await res.text()).toContain("ffmpeg");
+		it("rejects a wrong password and shows the form again", async (ctx) => {
+			const { page, cookie } = await openConsent();
+			if (!page.includes('name="password"')) ctx.skip();
+			const res = await submit(cookie, { handle: handleOf(page), decision: "approve", username: username!, password: "wrong-password-123" });
+			const again = await res.text();
+			expect(res.status, again).toBe(401);
+			expect(again).toContain("Невірний логін або пароль");
+			expect(again).toContain('name="handle"');
+		});
+
+		it("signs in, gets a token and calls the tools", async (ctx) => {
+			const { page, cookie } = await openConsent();
+			if (!page.includes('name="password"')) ctx.skip();
+			const res = await submit(cookie, { handle: handleOf(page), decision: "approve", username: username!, password: password! });
+			expect(res.status, await res.clone().text()).toBe(302);
+			const back = new URL(res.headers.get("Location")!);
+			expect(back.origin + back.pathname).toBe(REDIRECT_URI);
+			expect(back.searchParams.get("state")).toBe("xyz");
+
+			const token = await fetch(`${origin}/token`, {
+				method: "POST",
+				headers: { "Content-Type": "application/x-www-form-urlencoded" },
+				body: new URLSearchParams({
+					grant_type: "authorization_code",
+					code: back.searchParams.get("code")!,
+					redirect_uri: REDIRECT_URI,
+					client_id: clientId,
+					code_verifier: verifier,
+				}),
+			});
+			expect(token.status).toBe(200);
+			accessToken = ((await token.json()) as { access_token: string }).access_token;
+
+			mcp = new Client({ name: "e2e", version: "1.0.0" });
+			await mcp.connect(
+				new StreamableHTTPClientTransport(new URL(`${origin}/mcp`), {
+					requestInit: { headers: { Authorization: `Bearer ${accessToken}` } },
+				}),
+			);
+			const { tools } = await mcp.listTools();
+			expect(tools.map((t) => t.name).sort()).toEqual(["create_upload_link", "transcribe_audio"]);
+		});
+
+		const uploadUrl = async (format: string) => {
+			const result = await mcp.callTool({ name: "create_upload_link", arguments: { format } });
+			const text = (result.content as { text: string }[])[0].text;
+			return text.match(/https?:\/\/\S+\/upload\/\S+/)![0];
+		};
+
+		it.skipIf(!existsSync("test-audio/low.mp3"))("transcribes an upload once, then refuses the link", async (ctx) => {
+			if (!mcp) ctx.skip();
+			const url = await uploadUrl("srt");
+			const audio = readFileSync("test-audio/low.mp3");
+			const first = await fetch(url, { method: "PUT", body: audio });
+			const body = await first.text();
+			expect(first.status, body).toBe(200);
+			expect(body).toMatch(/^1\n00:00:00,000 --> .*\nHello, this is a test/);
+			expect((await fetch(url, { method: "PUT", body: audio })).status).toBe(410);
+		}, 60_000);
+
+		it.skipIf(!existsSync("test-audio/test-en.m4a"))("explains how to convert m4a", async (ctx) => {
+			if (!mcp) ctx.skip();
+			const res = await fetch(await uploadUrl("text"), { method: "PUT", body: readFileSync("test-audio/test-en.m4a") });
+			expect(res.status).toBe(415);
+			expect(await res.text()).toContain("ffmpeg");
+		});
 	});
 });

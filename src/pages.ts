@@ -14,6 +14,9 @@ p { margin: 0 0 12px; }
 .muted { color: var(--muted); font-size: .92rem; }
 .warn { border-left: 3px solid #d98a00; padding-left: 12px; }
 code { font: .9rem ui-monospace, Consolas, monospace; word-break: break-all; }
+.error { color: #c62828; }
+label { display: block; margin: 14px 0 0; font-size: .92rem; color: var(--muted); }
+input { display: block; width: 100%; margin-top: 4px; font: inherit; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
 .actions { display: flex; gap: 12px; justify-content: flex-end; margin-top: 20px; }
 button { font: inherit; padding: 10px 18px; border-radius: 8px; border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -32,12 +35,26 @@ function layout(title: string, body: string): string {
 </html>`;
 }
 
-export function consentPage(details: ConsentDescription, handle: string, domain: string): string {
+/** How the person proves who they are after approving: Google, or the temporary shared password. */
+export type LoginStep = { mode: "google"; domain: string } | { mode: "password"; error?: string };
+
+export function consentPage(details: ConsentDescription, handle: string, login: LoginStep): string {
 	const client = escapeHtml(details.clientName);
+	const intro =
+		login.mode === "google"
+			? `<p>Далі буде вхід через Google. Пускаємо лише робочі акаунти <strong>@${escapeHtml(login.domain)}</strong>.</p>`
+			: `<p>Увійдіть логіном і паролем Транскрайбера.</p>${
+					login.error ? `<p class="error">${escapeHtml(login.error)}</p>` : ""
+				}`;
+	const fields =
+		login.mode === "password"
+			? `<label>Логін<input name="username" autocomplete="username" required></label>
+<label>Пароль<input type="password" name="password" autocomplete="current-password" required></label>`
+			: "";
 	return layout(
 		"Транскрайбер КС — дозвіл",
 		`<h1>Дозволити «${client}» користуватися Транскрайбером КС?</h1>
-<p>Далі буде вхід через Google. Пускаємо лише робочі акаунти <strong>@${escapeHtml(domain)}</strong>.</p>
+${intro}
 <p class="muted">Доступ отримає: <code>${escapeHtml(details.redirectHost)}</code>${
 			details.clientDomain ? ` (видавець: ${escapeHtml(details.clientDomain)})` : ". Назву застосунок вказав сам"
 		}.</p>
@@ -48,8 +65,9 @@ ${
 }
 <form method="post">
 <input type="hidden" name="handle" value="${escapeHtml(handle)}">
+${fields}
 <div class="actions">
-<button name="decision" value="deny">Відмовити</button>
+<button name="decision" value="deny" formnovalidate>Відмовити</button>
 <button class="primary" name="decision" value="approve">Дозволити</button>
 </div>
 </form>`,

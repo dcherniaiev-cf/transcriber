@@ -11,7 +11,8 @@ import { randomToken, sha256Base64Url } from "./encoding";
 import { fetchGoogleUser, googleAuthorizeUrl, isAllowedUser } from "./google";
 import type { UserProps } from "./mcp";
 import { TranscriptionError } from "./near";
-import { consentPage, homePage, messagePage } from "./pages";
+import { consentPage, homePage, messagePage, type LoginStep } from "./pages";
+import { credentialsMatch, isLockedOut, passwordLoginConfigured, recordFailure } from "./password-login";
 import { checkAudio, runTranscription, tooLargeError } from "./pipeline";
 import { isUploadUsed, markUploadUsed, verifyUploadTicket } from "./uploads";
 
@@ -34,15 +35,30 @@ const rememberConsent = (env: Env) => ({ secret: env.SIGNING_SECRET });
 
 app.get("/", (c) => html(homePage(new URL(c.req.url).origin)));
 
+// "password" is the temporary shared-login mode; anything else means Google.
+const usesPassword = (env: Env) => (env.AUTH_MODE as string) === "password";
+
+async function showConsent(
+	oauth: OAuthHelpers,
+	request: AuthRequest,
+	login: LoginStep,
+	status = 200,
+	inherited?: Headers,
+) {
+	const details = await oauth.describeConsent(request);
+	const consent = await oauth.beginConsent(request);
+	for (const cookie of inherited?.getSetCookie() ?? []) consent.headers.append("Set-Cookie", cookie);
+	return html(consentPage(details, consent.handle, login), status, consent.headers);
+}
+
 app.get("/authorize", async (c) => {
 	const oauth = c.env.OAUTH_PROVIDER;
 	const request = await oauth.parseAuthRequest(c.req.raw);
+	if (usesPassword(c.env)) return showConsent(oauth, request, { mode: "password" });
 	if (await oauth.isConsentRemembered(c.req.raw, request, rememberConsent(c.env))) {
 		return redirectToGoogle(c.env, c.req.url, request, new Headers());
 	}
-	const details = await oauth.describeConsent(request);
-	const consent = await oauth.beginConsent(request);
-	return html(consentPage(details, consent.handle, c.env.ALLOWED_DOMAIN), 200, consent.headers);
+	return showConsent(oauth, request, { mode: "google", domain: c.env.ALLOWED_DOMAIN });
 });
 
 app.post("/authorize", async (c) => {
@@ -53,9 +69,44 @@ app.post("/authorize", async (c) => {
 		const denied = await oauth.denyConsent(c.req.raw, handle);
 		return new Response(null, { status: 302, headers: denied.headers });
 	}
+	if (usesPassword(c.env)) return passwordLogin(c.env, c.req.raw, form, handle);
 	const approved = await oauth.approveConsent(c.req.raw, handle, { remember: rememberConsent(c.env) });
 	return redirectToGoogle(c.env, c.req.url, approved.request, approved.headers);
 });
+
+// No remembered consent here: the password is the only proof of identity, so it
+// is asked every time a client connects.
+async function passwordLogin(env: Bindings, raw: Request, form: FormData, handle: string) {
+	const oauth = env.OAUTH_PROVIDER;
+	const approved = await oauth.approveConsent(raw, handle);
+	if (!passwordLoginConfigured(env)) {
+		return html(messagePage("Вхід не налаштовано", "Адміністратор ще не задав логін і пароль Транскрайбера."), 503);
+	}
+	const ip = raw.headers.get("CF-Connecting-IP") ?? "local";
+	if (await isLockedOut(env.OAUTH_KV, ip)) {
+		return html(messagePage("Забагато спроб", "Забагато невдалих спроб входу. Спробуйте за 15 хвилин."), 429);
+	}
+
+	const username = String(form.get("username") ?? "").trim();
+	if (!(await credentialsMatch(env, username, String(form.get("password") ?? "")))) {
+		await recordFailure(env.OAUTH_KV, ip);
+		console.warn(JSON.stringify({ event: "login_rejected", mode: "password", ip }));
+		const login: LoginStep = { mode: "password", error: "Невірний логін або пароль." };
+		return showConsent(oauth, approved.request, login, 401, approved.headers);
+	}
+
+	const props: UserProps = { email: username, name: username };
+	const { redirectTo } = await oauth.completeAuthorization({
+		request: approved.request,
+		userId: encodeURIComponent(username),
+		metadata: { label: username },
+		scope: approved.request.scope,
+		props,
+	});
+	console.log(JSON.stringify({ event: "login", mode: "password", user: username }));
+	approved.headers.set("Location", redirectTo);
+	return new Response(null, { status: 302, headers: approved.headers });
+}
 
 async function redirectToGoogle(env: Bindings, requestUrl: string, request: AuthRequest, headers: Headers) {
 	const verifier = randomToken(32);

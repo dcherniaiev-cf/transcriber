@@ -3,6 +3,7 @@ import { sniffAudio } from "../src/audio";
 import { fromBase64, toBase64Url } from "../src/encoding";
 import { clock, render, type Transcript } from "../src/format";
 import { isAllowedUser, type GoogleUser } from "../src/google";
+import { credentialsMatch, passwordLoginConfigured } from "../src/password-login";
 import { checkAudio } from "../src/pipeline";
 import { signUploadTicket, verifyUploadTicket } from "../src/uploads";
 
@@ -85,6 +86,24 @@ describe("isAllowedUser", () => {
 		expect(isAllowedUser(user({ email_verified: false }), "culturalforces.org")).toBe(false);
 		expect(isAllowedUser(user({ hd: undefined }), "culturalforces.org")).toBe(false);
 		expect(isAllowedUser(user({ email: "x@culturalforces.org.evil.com" }), "culturalforces.org")).toBe(false);
+	});
+});
+
+describe("password login", () => {
+	const env = { LOGIN_USERNAME: "ks", LOGIN_PASSWORD: "correct horse battery" };
+
+	it("accepts only the exact login and password", async () => {
+		expect(await credentialsMatch(env, "ks", "correct horse battery")).toBe(true);
+		expect(await credentialsMatch(env, "ks", "correct horse batter")).toBe(false);
+		expect(await credentialsMatch(env, "KS", "correct horse battery")).toBe(false);
+		expect(await credentialsMatch(env, "", "")).toBe(false);
+	});
+
+	it("stays closed until a long enough password is configured", async () => {
+		expect(passwordLoginConfigured({})).toBe(false);
+		expect(passwordLoginConfigured({ LOGIN_USERNAME: "ks", LOGIN_PASSWORD: "short" })).toBe(false);
+		expect(await credentialsMatch({ LOGIN_USERNAME: "ks", LOGIN_PASSWORD: "" }, "ks", "")).toBe(false);
+		expect(passwordLoginConfigured(env)).toBe(true);
 	});
 });
 

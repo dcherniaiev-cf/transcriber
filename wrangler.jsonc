@@ -15,13 +15,17 @@
 		}
 	],
 	"vars": {
+		// "google": sign in with a Workspace account of ALLOWED_DOMAIN.
+		// "password": temporary shared login (LOGIN_USERNAME / LOGIN_PASSWORD secrets).
+		"AUTH_MODE": "password",
 		// Only Google Workspace accounts of this domain may sign in.
 		"ALLOWED_DOMAIN": "culturalforces.org",
 		// The Worker's public address, no trailing slash. Shown by `wrangler deploy`.
 		"PUBLIC_ORIGIN": "https://ks-transcriber.d-cherniaiev-5a7.workers.dev"
 	},
 	// Secrets (set with `npx wrangler secret put <NAME>`):
-	// NEAR_API_KEY, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SIGNING_SECRET
+	// NEAR_API_KEY, SIGNING_SECRET, and either GOOGLE_CLIENT_ID + GOOGLE_CLIENT_SECRET
+	// or LOGIN_USERNAME + LOGIN_PASSWORD, depending on AUTH_MODE.
 	"observability": {
 		"enabled": true
 	},
