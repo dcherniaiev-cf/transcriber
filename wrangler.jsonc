@@ -17,7 +17,7 @@
 	"vars": {
 		// "google": sign in with a Workspace account of ALLOWED_DOMAIN.
 		// "password": temporary shared login (LOGIN_USERNAME / LOGIN_PASSWORD secrets).
-		"AUTH_MODE": "password",
+		"AUTH_MODE": "google",
 		// Only Google Workspace accounts of this domain may sign in.
 		"ALLOWED_DOMAIN": "culturalforces.org",
 		// The Worker's public address, no trailing slash. Shown by `wrangler deploy`.
