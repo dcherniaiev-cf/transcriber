@@ -7,8 +7,11 @@ export type Sniffed = { ok: true; ext: AudioExt } | { ok: false; detected: strin
 
 export const MAX_AUDIO_BYTES = 25_000_000;
 
-export const CONVERT_HINT =
-	'Конвертуйте файл у ogg (заодно стисне: ~2 години вміщаються в 25 МБ): ffmpeg -i "ВХІДНИЙ_ФАЙЛ" -vn -ac 1 -ar 16000 -c:a libopus -b:a 24k "РЕЗУЛЬТАТ.ogg"';
+/** Mono 16 kHz Opus at 24 kbit/s: what Whisper needs, ~2 hours in 25 MB. */
+export const ffmpegCommand = (input: string, output: string) =>
+	`ffmpeg -i "${input}" -vn -ac 1 -ar 16000 -c:a libopus -b:a 24k "${output}"`;
+
+export const CONVERT_HINT = `Конвертуйте файл у ogg (заодно стисне: ~2 години вміщаються в 25 МБ): ${ffmpegCommand("ВХІДНИЙ_ФАЙЛ", "РЕЗУЛЬТАТ.ogg")}`;
 
 /** Detects the container from magic bytes, so the file name doesn't matter. */
 export function sniffAudio(bytes: Uint8Array): Sniffed {

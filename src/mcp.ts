@@ -1,7 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { getMcpAuthContext } from "agents/mcp/server";
 import * as z from "zod";
-import { CONVERT_HINT } from "./audio";
+import { ffmpegCommand } from "./audio";
 import { fromBase64 } from "./encoding";
 import { OUTPUT_FORMATS, type OutputFormat } from "./format";
 import { TranscriptionError } from "./near";
@@ -77,7 +77,7 @@ export function createServer(env: Env): McpServer {
 							`Any other code: the file holds the error message; the link stays valid for a retry until it expires.`,
 							"",
 							"Before uploading m4a/aac/webm/mp4/mov or anything over 25 MB, convert:",
-							CONVERT_HINT.split(": ").slice(1).join(": "),
+							ffmpegCommand("AUDIO", "AUDIO.ogg"),
 						].join("\n"),
 					},
 				],

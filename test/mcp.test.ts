@@ -52,7 +52,7 @@ describe("MCP tools", () => {
 		expect(url).not.toBeNull();
 		expect(await verifyUploadTicket(env.SIGNING_SECRET, url![1])).toMatchObject({ format: "srt", language: "uk" });
 		expect(body).toContain('-o "AUDIO.srt"');
-		expect(body).toContain("libopus");
+		expect(body).toMatch(/^ffmpeg -i "AUDIO" .*libopus.* "AUDIO\.ogg"$/m);
 	});
 
 	it("rejects an invalid language code", async () => {
